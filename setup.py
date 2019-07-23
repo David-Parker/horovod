@@ -44,6 +44,7 @@ torch_mpi_lib = Extension('horovod.torch.mpi_lib', [])
 torch_mpi_lib_impl = Extension('horovod.torch.mpi_lib_impl', [])
 torch_mpi_lib_v2 = Extension('horovod.torch.mpi_lib_v2', [])
 mxnet_mpi_lib = Extension('horovod.mxnet.mpi_lib', [])
+cntk_mpi_lib = Extension('horovod.cntk.mpi_lib', [])
 gloo_lib = CMakeExtension('gloo', cmake_lists_dir='third_party/gloo',
                           sources=[])
 
@@ -178,6 +179,50 @@ def get_link_flags(build_ext):
                        'Last error:\n\n%s' % traceback.format_exc()
 
     raise DistutilsPlatformError(last_err)
+
+
+def get_cntk_include_dirs():
+    return ['./horovod/cntk/include']
+
+
+def get_cntk_lib_dirs():
+    # /data/anaconda/envs/py35/lib/python3.5/site-packages/cntk
+    cntk_root = os.environ.get('HOROVOD_CNTK_HOME')
+    return [os.path.join(cntk_root, 'libs')]
+
+
+def get_cntk_libs():
+    lib_dirs = get_cntk_lib_dirs()
+    #libs = []
+
+    #for dir in lib_dirs:
+     #   for subdir, dirs, files in os.walk(dir):
+      #      for file in files:
+       #         if file.endswith(('.so')):
+        #            libs.append(file)
+
+    libs = ['Cntk.Core-2.7', 'Cntk.Math-2.7', 'mklml_intel', 'Cntk.PerformanceProfiler-2.7']
+
+    return libs
+
+
+def get_cntk_flags(build_ext, cpp_flags):
+    cntk_include_dirs = get_cntk_include_dirs()
+    cntk_lib_dirs = get_cntk_lib_dirs()
+    cntk_libs = get_cntk_libs()
+    compile_flags = []
+
+    for include_dir in cntk_include_dirs:
+        compile_flags.append('-I%s' % include_dir)
+
+    link_flags = []
+
+    for lib_dir in cntk_lib_dirs:
+        link_flags.append('-L%s' % lib_dir)
+    for lib in cntk_libs:
+        link_flags.append('-l%s' % lib)
+
+    return compile_flags, link_flags
 
 
 def get_tf_include_dirs():
@@ -764,6 +809,24 @@ def remove_offensive_gcc_compiler_options(compiler_version):
     return None, None, None
 
 
+def build_cntk_extension(build_ext, options):
+    cntk_compile_flags, cntk_link_flags = get_cntk_flags(
+        build_ext, options['COMPILE_FLAGS'])
+
+    cntk_mpi_lib.define_macros = options['MACROS']
+    cntk_mpi_lib.include_dirs = options['INCLUDES']
+    cntk_mpi_lib.sources = options['SOURCES'] + \
+                                 ['horovod/cntk/mpi_ops.cc']
+    cntk_mpi_lib.extra_compile_args = options['COMPILE_FLAGS'] + \
+                                            cntk_compile_flags
+    cntk_mpi_lib.extra_link_args = options['LINK_FLAGS'] + cntk_link_flags
+
+    cntk_mpi_lib.library_dirs = options['LIBRARY_DIRS']
+    cntk_mpi_lib.libraries = options['LIBRARIES']
+
+    build_ext.build_extension(cntk_mpi_lib)
+
+
 def build_tf_extension(build_ext, options):
     check_tf_version()
     tf_compile_flags, tf_link_flags = get_tf_flags(
@@ -1287,6 +1350,18 @@ class custom_build_ext(build_ext):
         # we may get an error: dlopen: cannot load any more object with static TLS
         if not os.environ.get('HOROVOD_WITHOUT_PYTORCH'):
             dummy_import_torch()
+        if not os.environ.get('HOROVOD_WITHOUT_CNTK'):
+            try:
+                build_cntk_extension(self, options)
+                built_plugins.append(True)
+            except:
+                if not os.environ.get('HOROVOD_WITH_CNTK'):
+                    print(
+                        'INFO: Unable to build CNTK plugin, will skip it.\n\n'
+                        '%s' % traceback.format_exc(), file=sys.stderr)
+                    built_plugins.append(False)
+                else:
+                    raise
         if not os.environ.get('HOROVOD_WITHOUT_TENSORFLOW'):
             try:
                 build_tf_extension(self, options)
@@ -1353,7 +1428,7 @@ setup(name='horovod',
           'License :: OSI Approved :: Apache Software License'
       ],
       ext_modules=[tensorflow_mpi_lib, torch_mpi_lib, torch_mpi_lib_impl,
-                   torch_mpi_lib_v2, mxnet_mpi_lib, gloo_lib],
+                   torch_mpi_lib_v2, mxnet_mpi_lib, gloo_lib, cntk_mpi_lib],
       cmdclass={'build_ext': custom_build_ext},
       # cffi is required for PyTorch
       # If cffi is specified in setup_requires, it will need libffi to be installed on the machine,
