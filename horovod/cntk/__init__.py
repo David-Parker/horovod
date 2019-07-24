@@ -2,6 +2,7 @@ import cntk as C
 from cntk.learners import Learner
 
 from horovod.cntk.mpi_ops import allreduce, broadcast
+from horovod.cntk.mpi_ops import init, shutdown, size, local_size, rank, local_rank, mpi_threads_supported
 
 
 # CTNK uses the term "learner" rather than optimizer. All optimizer functions return a "Learner" base class. 
@@ -42,10 +43,11 @@ class DistributedOptimizer(cntk.learners.Learner):
             - must all reduce the gradients, then set its value on this class.
         """
 
+        # reduce gradient values and return the new aggregate
+        new_gradients = allreduce(gradient_values)
 
-    def do_allreduce(self, gradient_values):
-        # all reduce the gradients
-
+        # set current 
+        self._optimizer.update(new_gradients, training_sample_count, is_sweep_end)
 
 
 
